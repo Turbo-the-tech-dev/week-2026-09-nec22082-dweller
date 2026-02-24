@@ -1,0 +1,27 @@
+{
+  "name": "sample-2800sqft-house",
+  "description": "Example calculation for a 2800 sq ft dwelling with typical appliances",
+  "created": "2026-02-24",
+  "input": {
+    "sqft": 2800,
+    "small_circuits": 2,
+    "laundry_circuits": 1,
+    "appliances": [
+      {"name": "electric-dryer", "va": 5000},
+      {"name": "electric-range", "va": 12000},
+      {"name": "water-heater", "va": 4500},
+      {"name": "dishwasher", "va": 1500},
+      {"name": "garbage-disposal", "va": 1000}
+    ],
+    "heating_va": 15000,
+    "cooling_va": 8000
+  },
+  "expected_results": {
+    "general_raw_va": 24900,
+    "general_demanded_va": 15960,
+    "hvac_va": 15000,
+    "total_va": 30960,
+    "required_amps": 129,
+    "recommended_service": 150
+  }
+}

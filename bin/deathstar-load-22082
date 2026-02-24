@@ -1,0 +1,421 @@
+#!/bin/bash
+# DEATHSTAR NEC 220.82 Dwelling Load Oracle v1.0
+# Commander Turbo – Week 2026-09
+# NEC 2023/2026 Compliant
+
+set -e
+
+# Colors of the Dark Side
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Script directory for sourcing libs
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Source libraries if they exist
+[[ -f "$PROJECT_DIR/lib/calc.sh" ]] && source "$PROJECT_DIR/lib/calc.sh"
+[[ -f "$PROJECT_DIR/lib/report.sh" ]] && source "$PROJECT_DIR/lib/report.sh"
+
+# Default values
+SQFT=0
+SMALL=2
+LAUNDRY=1
+APPLIANCES=()
+HEAT=0
+AC=0
+WIZARD=false
+SAVE_PROJECT=""
+LOAD_PROJECT=""
+OUTPUT_FORMAT="terminal"
+
+show_usage() {
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║   DEATHSTAR NEC 220.82 Dwelling Load Oracle v1.0      ║${NC}"
+    echo -e "${YELLOW}║   Turbo Fleet Command – Weekly Imperial App #09       ║${NC}"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}Usage:${NC}"
+    echo "  deathstar load 22082 [options]"
+    echo "  ./bin/deathstar-load-22082 [options]"
+    echo ""
+    echo -e "${CYAN}Options:${NC}"
+    echo "  --wizard                      Interactive guided mode"
+    echo "  --sqft <N>                    Habitable square footage"
+    echo "  --small <N>                   Small-appliance circuits (min 2, default: 2)"
+    echo "  --laundry <N>                 Laundry circuits (min 1, default: 1)"
+    echo "  --appliances <list>           Comma-separated name:VA pairs"
+    echo "                                Example: \"dryer:5000,range:12000,water-heater:4500\""
+    echo "  --heat <VA>                   Total heating load VA"
+    echo "  --ac <VA>                     Total air conditioning load VA"
+    echo "  --save <name>                 Save project for later use"
+    echo "  --load <name>                 Load saved project"
+    echo "  --output <format>             Output format: terminal, markdown, json (default: terminal)"
+    echo "  --help, -h                    Show this help message"
+    echo ""
+    echo -e "${CYAN}Examples:${NC}"
+    echo "  # Interactive wizard"
+    echo "  $0 --wizard"
+    echo ""
+    echo "  # Quick calculation for 2800 sq ft house"
+    echo "  $0 --sqft 2800 --small 2 --laundry 1 --appliances \"dryer:5000,range:12000\" --heat 15000 --ac 8000"
+    echo ""
+    echo "  # Save and load projects"
+    echo "  $0 --sqft 2800 --save my-house"
+    echo "  $0 --load my-house"
+    exit 1
+}
+
+# Wizard mode
+run_wizard() {
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║     NEC 220.82 Interactive Wizard – Imperial Mode     ║${NC}"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    echo -e "${CYAN}Enter habitable square footage:${NC}"
+    read -r SQFT
+    [[ -z "$SQFT" || "$SQFT" -lt 1 ]] && SQFT=0
+    
+    echo -e "${CYAN}Number of small-appliance circuits (min 2, default 2):${NC}"
+    read -r SMALL
+    [[ -z "$SMALL" || "$SMALL" -lt 2 ]] && SMALL=2
+    
+    echo -e "${CYAN}Number of laundry circuits (min 1, default 1):${NC}"
+    read -r LAUNDRY
+    [[ -z "$LAUNDRY" || "$LAUNDRY" -lt 1 ]] && LAUNDRY=1
+    
+    echo -e "${CYAN}Fixed appliances (format: name:VA,name:VA, or press Enter to skip):${NC}"
+    echo -e "   ${BLUE}Common values:${NC}"
+    echo "   - Electric range: 12000 VA"
+    echo "   - Electric dryer: 5000 VA"
+    echo "   - Water heater: 4500 VA"
+    echo "   - Dishwasher: 1500 VA"
+    echo "   - Garbage disposal: 1000 VA"
+    echo "   - Wall oven: 6000 VA"
+    echo "   - Cooktop: 8000 VA"
+    echo "   - Furnace blower: 1200 VA"
+    read -r APPLIANCE_INPUT
+    [[ -n "$APPLIANCE_INPUT" ]] && IFS=',' read -ra APPLIANCES <<< "$APPLIANCE_INPUT"
+    
+    echo -e "${CYAN}Heating load VA (or 0 if none):${NC}"
+    echo -e "   ${BLUE}Include: electric furnace, baseboard heaters, electric boiler${NC}"
+    read -r HEAT
+    [[ -z "$HEAT" ]] && HEAT=0
+    
+    echo -e "${CYAN}Air conditioning load VA (or 0 if none):${NC}"
+    echo -e "   ${BLUE}Include: central AC, heat pump cooling${NC}"
+    read -r AC
+    [[ -z "$AC" ]] && AC=0
+    
+    echo ""
+    echo -e "${YELLOW}Save this project? (name or press Enter to skip):${NC}"
+    read -r SAVE_PROJECT
+}
+
+# Save project to JSON
+save_project() {
+    local name="$1"
+    local save_dir="$HOME/.deathstar/projects"
+    mkdir -p "$save_dir"
+    
+    local appliances_json="["
+    local first=true
+    for app in "${APPLIANCES[@]}"; do
+        if [[ "$first" == true ]]; then
+            first=false
+        else
+            appliances_json+=","
+        fi
+        appliances_json+="\"$app\""
+    done
+    appliances_json+="]"
+    
+    cat > "$save_dir/${name}.json" << EOF
+{
+  "name": "$name",
+  "created": "$(date -Iseconds)",
+  "sqft": $SQFT,
+  "small_circuits": $SMALL,
+  "laundry_circuits": $LAUNDRY,
+  "appliances": $appliances_json,
+  "heat_va": $HEAT,
+  "ac_va": $AC
+}
+EOF
+    echo -e "${GREEN}✓ Project saved to $save_dir/${name}.json${NC}"
+}
+
+# Load project from JSON
+load_project() {
+    local name="$1"
+    local load_file="$HOME/.deathstar/projects/${name}.json"
+    
+    if [[ ! -f "$load_file" ]]; then
+        echo -e "${RED}✗ Project '$name' not found${NC}"
+        exit 1
+    fi
+    
+    # Parse JSON with basic tools (no jq dependency)
+    SQFT=$(grep '"sqft"' "$load_file" | grep -oE '[0-9]+')
+    SMALL=$(grep '"small_circuits"' "$load_file" | grep -oE '[0-9]+')
+    LAUNDRY=$(grep '"laundry_circuits"' "$load_file" | grep -oE '[0-9]+')
+    HEAT=$(grep '"heat_va"' "$load_file" | grep -oE '[0-9]+')
+    AC=$(grep '"ac_va"' "$load_file" | grep -oE '[0-9]+')
+    
+    # Parse appliances array
+    local appliances_line=$(grep -oE '"appliances": \[[^]]*\]' "$load_file")
+    APPLIANCES=($(echo "$appliances_line" | grep -oE '"[^"]+"' | tr -d '"'))
+    
+    echo -e "${GREEN}✓ Project '$name' loaded${NC}"
+}
+
+# Main calculation engine
+calculate_load() {
+    # 220.82(B) General Loads
+    local general_lighting=$(( SQFT * 3 ))
+    local small_appliance=$(( SMALL * 1500 ))
+    local laundry=$(( LAUNDRY * 1500 ))
+    
+    GENERAL=$(( general_lighting + small_appliance + laundry ))
+    
+    # Add fixed appliances
+    for app in "${APPLIANCES[@]}"; do
+        local va=$(echo "$app" | cut -d':' -f2)
+        GENERAL=$(( GENERAL + va ))
+    done
+    
+    # Demand factor per 220.82(B)
+    if (( GENERAL > 10000 )); then
+        DEMANDED=$(( 10000 + (GENERAL - 10000) * 40 / 100 ))
+    else
+        DEMANDED=$GENERAL
+    fi
+    
+    # 220.82(C) HVAC - use larger of heating or cooling
+    if (( HEAT > AC )); then
+        HVAC=$HEAT
+    else
+        HVAC=$AC
+    fi
+    
+    # Grand total
+    TOTAL_VA=$(( DEMANDED + HVAC ))
+    AMPS=$(( TOTAL_VA / 240 ))
+    
+    # Recommended service size (next standard: 100, 125, 150, 200, 400)
+    if (( AMPS <= 100 )); then
+        SERVICE=100
+    elif (( AMPS <= 125 )); then
+        SERVICE=125
+    elif (( AMPS <= 150 )); then
+        SERVICE=150
+    elif (( AMPS <= 200 )); then
+        SERVICE=200
+    else
+        SERVICE=$(( (AMPS + 99) / 100 * 100 ))
+    fi
+    
+    # Minimum service per NEC 230.79(C)
+    if (( SERVICE < 100 )); then
+        SERVICE=100
+        WARNING=true
+    else
+        WARNING=false
+    fi
+}
+
+# Terminal output
+output_terminal() {
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║        NEC 220.82 OPTIONAL CALCULATION REPORT         ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${CYAN}INPUT SUMMARY${NC}"
+    echo "─────────────────────────────────────────────────────"
+    printf "  %-35s %s\n" "Habitable area:" "${SQFT} sq ft"
+    printf "  %-35s %s\n" "Small-appliance circuits:" "${SMALL} × 1500 VA"
+    printf "  %-35s %s\n" "Laundry circuits:" "${LAUNDRY} × 1500 VA"
+    
+    if [[ ${#APPLIANCES[@]} -gt 0 ]]; then
+        echo "  Fixed appliances:"
+        for app in "${APPLIANCES[@]}"; do
+            local name=$(echo "$app" | cut -d':' -f1)
+            local va=$(echo "$app" | cut -d':' -f2)
+            printf "    %-33s %s VA\n" "$name:" "$va"
+        done
+    fi
+    printf "  %-35s %s\n" "Heating load:" "${HEAT} VA"
+    printf "  %-35s %s\n" "Air conditioning load:" "${AC} VA"
+    echo ""
+    
+    echo -e "${CYAN}CALCULATION BREAKDOWN${NC}"
+    echo "─────────────────────────────────────────────────────"
+    printf "  %-35s %s\n" "General lighting (3 VA/sqft):" "$(( SQFT * 3 )) VA"
+    printf "  %-35s %s\n" "Small-appliance circuits:" "$(( SMALL * 1500 )) VA"
+    printf "  %-35s %s\n" "Laundry circuits:" "$(( LAUNDRY * 1500 )) VA"
+    
+    local appliance_total=0
+    for app in "${APPLIANCES[@]}"; do
+        local va=$(echo "$app" | cut -d':' -f2)
+        appliance_total=$(( appliance_total + va ))
+    done
+    printf "  %-35s %s\n" "Fixed appliances:" "$appliance_total VA"
+    echo "  ─────────────────────────────────────────────"
+    printf "  %-35s %s\n" "General loads (raw total):" "${GENERAL} VA"
+    printf "  %-35s %s\n" "Demand factor applied:" "10k@100% + remainder@40%"
+    printf "  %-35s %s\n" "Demanded general loads:" "${DEMANDED} VA"
+    printf "  %-35s %s\n" "HVAC (larger of heat/AC):" "${HVAC} VA"
+    echo ""
+    
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║                    FINAL RESULTS                      ║${NC}"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    printf "  ${CYAN}%-34s${NC} %s\n" "TOTAL CALCULATED LOAD:" "${RED}${TOTAL_VA} VA${NC}"
+    printf "  ${CYAN}%-34s${NC} %s\n" "REQUIRED AMPS @ 240V:" "${RED}${AMPS} A${NC}"
+    printf "  ${CYAN}%-34s${NC} %s\n" "RECOMMENDED SERVICE:" "${GREEN}${SERVICE} A${NC}"
+    
+    if [[ "$WARNING" == true ]]; then
+        echo ""
+        echo -e "${RED}⚠ WARNING: NEC 230.79(C) requires minimum 100A service for dwellings${NC}"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}NEC References:${NC}"
+    echo "  • 220.82(B) – General Loads Demand Factor"
+    echo "  • 220.82(C) – Heating or Air-Conditioning Load"
+    echo "  • 230.79(C) – Minimum Service Rating (100A for dwellings)"
+    echo ""
+    echo -e "${GREEN}Calculation complete. The Fleet approves.${NC}"
+}
+
+# Markdown output
+output_markdown() {
+    cat << EOF
+# NEC 220.82 Load Calculation Report
+
+**Generated:** $(date)  
+**Project:** ${SAVE_PROJECT:-"Unsaved"}
+
+## Input Summary
+
+| Parameter | Value |
+|-----------|-------|
+| Habitable Area | ${SQFT} sq ft |
+| Small-Appliance Circuits | ${SMALL} |
+| Laundry Circuits | ${LAUNDRY} |
+| Heating Load | ${HEAT} VA |
+| AC Load | ${AC} VA |
+
+## Calculation Breakdown
+
+### General Loads (220.82(B))
+
+- General Lighting: $(( SQFT * 3 )) VA (${SQFT} sq ft × 3 VA)
+- Small-Appliance Circuits: $(( SMALL * 1500 )) VA (${SMALL} × 1500 VA)
+- Laundry Circuits: $(( LAUNDRY * 1500 )) VA (${LAUNDRY} × 1500 VA)
+- Fixed Appliances: $(for app in "${APPLIANCES[@]}"; do echo "$app" | cut -d':' -f2; done | paste -sd+ | bc) VA
+
+**Raw Total:** ${GENERAL} VA  
+**After Demand Factor:** ${DEMANDED} VA
+
+### HVAC Load (220.82(C))
+
+- Heating: ${HEAT} VA
+- Air Conditioning: ${AC} VA
+- **Used (larger):** ${HVAC} VA
+
+---
+
+## Final Results
+
+| Metric | Value |
+|--------|-------|
+| **Total Calculated Load** | **${TOTAL_VA} VA** |
+| **Required Amps @ 240V** | **${AMPS} A** |
+| **Recommended Service** | **${SERVICE} A** |
+
+---
+
+*Generated by DEATHSTAR NEC 220.82 Oracle – Turbo Fleet Command*
+EOF
+}
+
+# JSON output
+output_json() {
+    cat << EOF
+{
+  "input": {
+    "sqft": $SQFT,
+    "small_circuits": $SMALL,
+    "laundry_circuits": $LAUNDRY,
+    "appliances": [$(printf '"%s",' "${APPLIANCES[@]}" | sed 's/,$//')],
+    "heat_va": $HEAT,
+    "ac_va": $AC
+  },
+  "results": {
+    "general_raw_va": $GENERAL,
+    "general_demanded_va": $DEMANDED,
+    "hvac_va": $HVAC,
+    "total_va": $TOTAL_VA,
+    "required_amps": $AMPS,
+    "recommended_service": $SERVICE
+  },
+  "nec_references": ["220.82(B)", "220.82(C)", "230.79(C)"]
+}
+EOF
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --wizard|-w) WIZARD=true ;;
+        --sqft) SQFT=$2; shift ;;
+        --small) SMALL=$2; shift ;;
+        --laundry) LAUNDRY=$2; shift ;;
+        --appliances) IFS=',' read -ra APPLIANCES <<< "$2"; shift ;;
+        --heat) HEAT=$2; shift ;;
+        --ac) AC=$2; shift ;;
+        --save) SAVE_PROJECT=$2; shift ;;
+        --load) LOAD_PROJECT=$2; shift ;;
+        --output) OUTPUT_FORMAT=$2; shift ;;
+        --help|-h) show_usage ;;
+        *) show_usage ;;
+    esac
+    shift
+done
+
+# Main execution
+if [[ "$WIZARD" == true ]]; then
+    run_wizard
+elif [[ -n "$LOAD_PROJECT" ]]; then
+    load_project "$LOAD_PROJECT"
+fi
+
+# Validate inputs
+if [[ "$SQFT" -lt 1 && ${#APPLIANCES[@]} -eq 0 ]]; then
+    echo -e "${RED}✗ Error: Must provide either --sqft or --appliances${NC}"
+    echo -e "${YELLOW}Run with --wizard for interactive mode or --help for usage${NC}"
+    exit 1
+fi
+
+# Calculate
+calculate_load
+
+# Output
+case $OUTPUT_FORMAT in
+    markdown|md) output_markdown ;;
+    json) output_json ;;
+    terminal|*) output_terminal ;;
+esac
+
+# Save if requested
+if [[ -n "$SAVE_PROJECT" ]]; then
+    save_project "$SAVE_PROJECT"
+fi
