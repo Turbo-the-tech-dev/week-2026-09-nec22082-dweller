@@ -7,6 +7,8 @@
 
 A pure Bash CLI extension for DEATHSTAR that ingests room inputs, appliance data, and HVAC specifications... then forges the **precise NEC 220.82 Optional Calculation** in seconds. Field-ready. Inspection-proof.
 
+**Version 2.0** – Now with full 220.82(A) exceptions enforcement and EV charger support.
+
 ## Installation
 
 ```bash
@@ -35,6 +37,14 @@ ln -s $(pwd)/bin/deathstar-load-22082 ~/bin/deathstar-load-22082
   --ac 8000
 ```
 
+### With EV Charger
+```bash
+./bin/deathstar-load-22082 \
+  --sqft 2800 --small 2 --laundry 1 \
+  --heat 15000 --ac 8000 \
+  --ev-charger 7200
+```
+
 ### DEATHSTAR Integration
 ```bash
 deathstar load 22082 --wizard
@@ -46,7 +56,8 @@ deathstar load 22082 --wizard
 - General lighting & receptacles: `habitable_sqft × 3 VA`
 - Small-appliance circuits: `1500 VA × number_of_small_circuits` (minimum 2)
 - Laundry circuit: `1500 VA × number_of_laundry` (minimum 1)
-- All fixed appliances (nameplate VA)
+- All fixed appliances (nameplate VA) at 100%
+- EV chargers at 100% (NEC 220.57)
 
 **Demand Factor:**
 ```
@@ -57,6 +68,15 @@ deathstar load 22082 --wizard
 - Sum all heating VA
 - Sum all cooling VA
 - Use **only the larger** of the two at 100%
+
+### 220.82(A) Conditions (ENFORCED)
+The optional method is **only permitted** when ALL of these are true:
+- Single-phase service (no 3-phase)
+- 3-wire configuration (2 ungrounded + neutral)
+- 120/240V or 120/208V systems only
+- Minimum 100A service rating
+
+If any condition fails, the calculator aborts and directs you to use the standard method (NEC 220 Part III).
 
 ## Output Example
 

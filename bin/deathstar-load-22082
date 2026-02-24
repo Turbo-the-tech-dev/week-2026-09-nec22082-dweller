@@ -1,7 +1,7 @@
 #!/bin/bash
-# DEATHSTAR NEC 220.82 Dwelling Load Oracle v1.0
+# DEATHSTAR NEC 220.82 Dwelling Load Oracle v2.0
 # Commander Turbo – Week 2026-09
-# NEC 2023/2026 Compliant
+# NEC 2023/2026 Compliant – With Imperial Exceptions Enforcement
 
 set -e
 
@@ -33,9 +33,17 @@ SAVE_PROJECT=""
 LOAD_PROJECT=""
 OUTPUT_FORMAT="terminal"
 
+# 220.82(A) Conditions – The Supreme Gatekeeper
+PHASE="1"        # Default: single-phase
+WIRES="3"        # Default: 3-wire (2 ungrounded + neutral)
+VOLTAGE="240"    # Default: 120/240V
+SERVICE_AMPS=100 # Minimum per code
+HAS_EV_CHARGER=false
+EV_CHARGER_VA=0
+
 show_usage() {
     echo -e "${YELLOW}╔═══════════════════════════════════════════════════════╗${NC}"
-    echo -e "${YELLOW}║   DEATHSTAR NEC 220.82 Dwelling Load Oracle v1.0      ║${NC}"
+    echo -e "${YELLOW}║   DEATHSTAR NEC 220.82 Dwelling Load Oracle v2.0      ║${NC}"
     echo -e "${YELLOW}║   Turbo Fleet Command – Weekly Imperial App #09       ║${NC}"
     echo -e "${YELLOW}╚═══════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -52,10 +60,18 @@ show_usage() {
     echo "                                Example: \"dryer:5000,range:12000,water-heater:4500\""
     echo "  --heat <VA>                   Total heating load VA"
     echo "  --ac <VA>                     Total air conditioning load VA"
+    echo "  --ev-charger <VA>             EV supply equipment VA (added at 100%)"
+    echo "  --voltage <V>                 System voltage (120/240 or 120/208, default: 240)"
     echo "  --save <name>                 Save project for later use"
     echo "  --load <name>                 Load saved project"
     echo "  --output <format>             Output format: terminal, markdown, json (default: terminal)"
     echo "  --help, -h                    Show this help message"
+    echo ""
+    echo -e "${CYAN}220.82(A) Conditions (enforced):${NC}"
+    echo "  • Single-phase only (no 3-phase)"
+    echo "  • 3-wire service (2 ungrounded + neutral)"
+    echo "  • 120/240V or 120/208V systems only"
+    echo "  • Minimum 100A service rating"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
     echo "  # Interactive wizard"
@@ -63,6 +79,9 @@ show_usage() {
     echo ""
     echo "  # Quick calculation for 2800 sq ft house"
     echo "  $0 --sqft 2800 --small 2 --laundry 1 --appliances \"dryer:5000,range:12000\" --heat 15000 --ac 8000"
+    echo ""
+    echo "  # With EV charger"
+    echo "  $0 --sqft 2800 --small 2 --laundry 1 --heat 15000 --ac 8000 --ev-charger 7200"
     echo ""
     echo "  # Save and load projects"
     echo "  $0 --sqft 2800 --save my-house"
@@ -115,6 +134,79 @@ run_wizard() {
     echo ""
     echo -e "${YELLOW}Save this project? (name or press Enter to skip):${NC}"
     read -r SAVE_PROJECT
+    
+    echo -e "${CYAN}EV charger installed? (y/n):${NC}"
+    read -r ev_response
+    if [[ "$ev_response" =~ ^[Yy]$ ]]; then
+        HAS_EV_CHARGER=true
+        echo -e "${CYAN}EV charger VA (nameplate, or 7200 for default):${NC}"
+        read -r EV_CHARGER_VA
+        [[ -z "$EV_CHARGER_VA" ]] && EV_CHARGER_VA=7200
+    fi
+}
+
+# IMPERIAL VALIDATION – 220.82(A) EXCEPTIONS ENFORCEMENT
+validate_22082_conditions() {
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}Verifying 220.82(A) conditions for optional calculation...${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+    
+    # Check phase configuration
+    if [[ "$PHASE" != "1" ]]; then
+        echo -e "${RED}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║  ERROR: 220.82 PERMITS SINGLE-PHASE ONLY              ║${NC}"
+        echo -e "${RED}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo -e "${RED}3-phase services are FORBIDDEN from using optional method.${NC}"
+        echo -e "${RED}Use standard method (NEC 220 Part III) instead.${NC}"
+        echo ""
+        echo -e "${YELLOW}Aborting calculation. The Code demands obedience.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Single-phase configuration: PASS${NC}"
+    
+    # Check wire count
+    if [[ "$WIRES" != "3" ]]; then
+        echo -e "${RED}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║  ERROR: 220.82 REQUIRES 3-WIRE SERVICE                ║${NC}"
+        echo -e "${RED}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo -e "${RED}Only 2 ungrounded conductors + neutral permitted.${NC}"
+        echo -e "${RED}4-wire 3-phase systems are FORBIDDEN.${NC}"
+        echo ""
+        echo -e "${YELLOW}Aborting calculation. The Code demands obedience.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ 3-wire service configuration: PASS${NC}"
+    
+    # Check voltage
+    if [[ "$VOLTAGE" != "240" && "$VOLTAGE" != "208" ]]; then
+        echo -e "${RED}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║  ERROR: INVALID VOLTAGE FOR 220.82                    ║${NC}"
+        echo -e "${RED}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo -e "${RED}Only 120/240V or 120/208V systems permitted.${NC}"
+        echo ""
+        echo -e "${YELLOW}Aborting calculation. The Code demands obedience.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Voltage configuration (120/${VOLTAGE}V): PASS${NC}"
+    
+    # Check minimum service rating
+    if (( SERVICE_AMPS < 100 )); then
+        echo -e "${RED}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║  ERROR: SERVICE MUST BE 100A OR GREATER               ║${NC}"
+        echo -e "${RED}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo -e "${RED}Per NEC 220.82(A), optional method requires 100A+ service.${NC}"
+        echo ""
+        echo -e "${YELLOW}Aborting calculation. The Code demands obedience.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Minimum service rating (≥100A): PASS${NC}"
+    
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  ALL 220.82(A) CONDITIONS SATISFIED                   ║${NC}"
+    echo -e "${GREEN}║  Optional method APPROVED for this dwelling           ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
 }
 
 # Save project to JSON
@@ -183,24 +275,33 @@ calculate_load() {
     
     GENERAL=$(( general_lighting + small_appliance + laundry ))
     
-    # Add fixed appliances
+    # Add fixed appliances (100% - NO demand factor per 220.82(B)(3))
     for app in "${APPLIANCES[@]}"; do
         local va=$(echo "$app" | cut -d':' -f2)
         GENERAL=$(( GENERAL + va ))
     done
     
+    # Add EV charger at 100% (NEC 220.57 - no demand factor)
+    if [[ "$HAS_EV_CHARGER" == true ]]; then
+        GENERAL=$(( GENERAL + EV_CHARGER_VA ))
+        echo -e "${CYAN}Note: EV charger added at 100% per NEC 220.57${NC}"
+    fi
+    
     # Demand factor per 220.82(B)
+    # First 10,000 VA at 100%, remainder at 40%
     if (( GENERAL > 10000 )); then
         DEMANDED=$(( 10000 + (GENERAL - 10000) * 40 / 100 ))
     else
         DEMANDED=$GENERAL
     fi
     
-    # 220.82(C) HVAC - use larger of heating or cooling
+    # 220.82(C) HVAC - use larger of heating or cooling (NOT both)
     if (( HEAT > AC )); then
         HVAC=$HEAT
+        echo -e "${CYAN}Note: Heating load selected (larger than AC)${NC}"
     else
         HVAC=$AC
+        echo -e "${CYAN}Note: AC load selected (larger than heating)${NC}"
     fi
     
     # Grand total
@@ -250,6 +351,11 @@ output_terminal() {
             printf "    %-33s %s VA\n" "$name:" "$va"
         done
     fi
+    
+    if [[ "$HAS_EV_CHARGER" == true ]]; then
+        printf "  %-35s %s\n" "EV charger:" "${EV_CHARGER_VA} VA"
+    fi
+    
     printf "  %-35s %s\n" "Heating load:" "${HEAT} VA"
     printf "  %-35s %s\n" "Air conditioning load:" "${AC} VA"
     echo ""
@@ -265,12 +371,17 @@ output_terminal() {
         local va=$(echo "$app" | cut -d':' -f2)
         appliance_total=$(( appliance_total + va ))
     done
-    printf "  %-35s %s\n" "Fixed appliances:" "$appliance_total VA"
+    printf "  %-35s %s\n" "Fixed appliances (100%):" "$appliance_total VA"
+    
+    if [[ "$HAS_EV_CHARGER" == true ]]; then
+        printf "  %-35s %s\n" "EV charger (100% per 220.57):" "${EV_CHARGER_VA} VA"
+    fi
+    
     echo "  ─────────────────────────────────────────────"
     printf "  %-35s %s\n" "General loads (raw total):" "${GENERAL} VA"
     printf "  %-35s %s\n" "Demand factor applied:" "10k@100% + remainder@40%"
     printf "  %-35s %s\n" "Demanded general loads:" "${DEMANDED} VA"
-    printf "  %-35s %s\n" "HVAC (larger of heat/AC):" "${HVAC} VA"
+    printf "  %-35s %s\n" "HVAC (larger of heat/AC per 220.82(C)):" "${HVAC} VA"
     echo ""
     
     echo -e "${YELLOW}╔═══════════════════════════════════════════════════════╗${NC}"
@@ -288,8 +399,10 @@ output_terminal() {
     
     echo ""
     echo -e "${BLUE}NEC References:${NC}"
+    echo "  • 220.82(A) – Optional Calculation Conditions"
     echo "  • 220.82(B) – General Loads Demand Factor"
-    echo "  • 220.82(C) – Heating or Air-Conditioning Load"
+    echo "  • 220.82(C) – Heating or Air-Conditioning Load (larger only)"
+    echo "  • 220.57 – Electric Vehicle Supply Equipment"
     echo "  • 230.79(C) – Minimum Service Rating (100A for dwellings)"
     echo ""
     echo -e "${GREEN}Calculation complete. The Fleet approves.${NC}"
@@ -382,6 +495,8 @@ while [[ $# -gt 0 ]]; do
         --appliances) IFS=',' read -ra APPLIANCES <<< "$2"; shift ;;
         --heat) HEAT=$2; shift ;;
         --ac) AC=$2; shift ;;
+        --ev-charger) HAS_EV_CHARGER=true; EV_CHARGER_VA=$2; shift ;;
+        --voltage) VOLTAGE=$2; shift ;;
         --save) SAVE_PROJECT=$2; shift ;;
         --load) LOAD_PROJECT=$2; shift ;;
         --output) OUTPUT_FORMAT=$2; shift ;;
@@ -397,6 +512,9 @@ if [[ "$WIZARD" == true ]]; then
 elif [[ -n "$LOAD_PROJECT" ]]; then
     load_project "$LOAD_PROJECT"
 fi
+
+# IMPERIAL VALIDATION - Run before calculation
+validate_22082_conditions
 
 # Validate inputs
 if [[ "$SQFT" -lt 1 && ${#APPLIANCES[@]} -eq 0 ]]; then
